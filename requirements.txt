@@ -1,0 +1,11 @@
+streamlit
+pymupdf
+pillow
+torch
+torchvision
+transformers
+accelerate
+huggingface-hub
+safetensors
+neo4j
+pyvis
