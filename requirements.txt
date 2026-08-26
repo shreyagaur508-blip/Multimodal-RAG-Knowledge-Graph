@@ -1,11 +1,15 @@
 streamlit
 pymupdf
 pillow
+numpy
+pandas
 torch
 torchvision
 transformers
 accelerate
 huggingface-hub
-safetensors
+colpali-engine
 neo4j
 pyvis
+python-dotenv
+requests
