@@ -1,11 +1,6 @@
 import os
 import numpy as np
-import torch
 from PIL import Image
-from colpali_engine.models import ColQwen2_5, ColQwen2_5_Processor
-
-
-MODEL_NAME = "vidore/colqwen2.5-v1.0"
 
 
 def create_visual_index(
@@ -13,18 +8,13 @@ def create_visual_index(
     index_path="indexes/page_embeddings.npy"
 ):
     """
-    Create visual embeddings for all PDF page images.
+    Create a temporary lightweight visual index.
+
+    This version is used to test the complete indexing pipeline
+    without downloading the large ColQwen2.5 model.
     """
 
-    print("Loading ColQwen2.5 model...")
-
-    model = ColQwen2_5.from_pretrained(
-        MODEL_NAME,
-        torch_dtype=torch.float32,
-        device_map="cpu"
-    ).eval()
-
-    processor = ColQwen2_5_Processor.from_pretrained(MODEL_NAME)
+    print("Starting lightweight visual indexing...")
 
     os.makedirs(os.path.dirname(index_path), exist_ok=True)
 
@@ -46,28 +36,35 @@ def create_visual_index(
     print(f"Found {len(image_files)} page images.")
 
     for image_path in image_files:
-
         print(f"Processing: {image_path}")
 
         image = Image.open(image_path).convert("RGB")
 
-        batch = processor.process_images([image])
+        # Resize image to a small fixed size
+        image = image.resize((32, 32))
 
-        with torch.no_grad():
-            embedding = model(**batch)
+        # Convert image to numpy array
+        array = np.asarray(image, dtype=np.float32)
 
-        embedding = embedding.cpu().numpy()
+        # Normalize pixel values
+        array = array / 255.0
 
-        # Average token embeddings to create one vector per page
-        embedding = embedding.mean(axis=1).squeeze()
+        # Flatten image into a vector
+        embedding = array.flatten()
+
+        # Normalize embedding
+        norm = np.linalg.norm(embedding)
+
+        if norm > 0:
+            embedding = embedding / norm
 
         embeddings.append(embedding)
 
-    embeddings = np.array(embeddings)
+    embeddings = np.array(embeddings, dtype=np.float32)
 
     np.save(index_path, embeddings)
 
-    print("\nVisual index created successfully!")
+    print("\nLightweight visual index created successfully!")
     print(f"Index saved to: {index_path}")
     print(f"Embedding shape: {embeddings.shape}")
 
