@@ -2,7 +2,7 @@ import os
 import re
 import sys
 
-import fitz
+import pymupdf
 
 
 # ============================================================
@@ -17,20 +17,13 @@ sys.path.insert(0, PROJECT_ROOT)
 
 
 # ============================================================
-# DIRECTORIES
+# PDF DIRECTORY
 # ============================================================
 
 PDF_DIR = os.path.join(
     PROJECT_ROOT,
     "data",
     "pdfs"
-)
-
-
-PAGES_DIR = os.path.join(
-    PROJECT_ROOT,
-    "data",
-    "pages"
 )
 
 
@@ -53,7 +46,7 @@ class VLMGenerator:
 
 
     # ========================================================
-    # FIND PDF
+    # FIND LATEST PDF
     # ========================================================
 
     def find_pdf(self):
@@ -64,18 +57,20 @@ class VLMGenerator:
 
             if filename.lower().endswith(".pdf"):
 
-                pdf_files.append(
-                    os.path.join(
-                        PDF_DIR,
-                        filename
-                    )
+                full_path = os.path.join(
+                    PDF_DIR,
+                    filename
                 )
+
+                pdf_files.append(full_path)
+
 
         if not pdf_files:
 
             return None
 
-        # Most recently modified PDF
+
+        # Latest uploaded PDF
         pdf_files.sort(
             key=os.path.getmtime,
             reverse=True
@@ -85,24 +80,41 @@ class VLMGenerator:
 
 
     # ========================================================
-    # EXTRACT PDF TEXT
+    # EXTRACT PDF CONTENT
     # ========================================================
 
-    def extract_document_text(self):
+    def extract_document(self):
 
         pdf_path = self.find_pdf()
 
         if not pdf_path:
 
-            return "", None
+            return {
+                "filename": None,
+                "text": "",
+                "lines": [],
+                "pages": []
+            }
+
+
+        print(
+            f"Reading document: "
+            f"{os.path.basename(pdf_path)}"
+        )
+
 
         try:
 
-            document = fitz.open(
+            document = pymupdf.open(
                 pdf_path
             )
 
-            pages = []
+            all_text = []
+
+            all_lines = []
+
+            page_data = []
+
 
             for page_number, page in enumerate(
                 document,
@@ -113,98 +125,414 @@ class VLMGenerator:
                     "text"
                 )
 
-                if text.strip():
 
-                    pages.append({
-                        "page_number": page_number,
-                        "text": text.strip()
-                    })
+                # Save page information
+                page_data.append({
+                    "page_number": page_number,
+                    "text": text
+                })
+
+
+                if text:
+
+                    all_text.append(
+                        text
+                    )
+
+
+                    for line in text.splitlines():
+
+                        line = line.strip()
+
+                        if line:
+
+                            all_lines.append(
+                                line
+                            )
+
 
             document.close()
 
-            full_text = "\n\n".join(
-                page["text"]
-                for page in pages
+
+            combined_text = "\n".join(
+                all_text
             )
 
-            return full_text, pages
+
+            return {
+                "filename": os.path.basename(
+                    pdf_path
+                ),
+                "text": combined_text,
+                "lines": all_lines,
+                "pages": page_data
+            }
+
 
         except Exception as error:
 
             print(
-                "PDF text extraction error:",
+                "PDF extraction error:",
                 error
             )
 
-            return "", None
+            return {
+                "filename": os.path.basename(
+                    pdf_path
+                ),
+                "text": "",
+                "lines": [],
+                "pages": []
+            }
 
 
     # ========================================================
-    # CLEAN TEXT
+    # CLEAN LINE
     # ========================================================
 
-    def clean_text(self, text):
+    def clean_line(self, line):
 
-        text = re.sub(
+        line = re.sub(
             r"\s+",
             " ",
-            text
+            line
         )
 
-        return text.strip()
+        return line.strip()
 
 
     # ========================================================
-    # FIND IMPORTANT SENTENCES
+    # DOCUMENT SUMMARY
     # ========================================================
 
-    def important_sentences(
+    def create_summary(
         self,
-        text
+        document
     ):
 
-        text = self.clean_text(
-            text
-        )
+        filename = document["filename"]
 
-        if not text:
+        lines = document["lines"]
 
-            return []
 
-        sentences = re.split(
-            r"(?<=[.!?])\s+",
-            text
-        )
+        if not lines:
 
-        useful = []
+            return (
+                "I could not extract readable text "
+                "from the document."
+            )
 
-        for sentence in sentences:
 
-            sentence = sentence.strip()
+        # ----------------------------------------------------
+        # Clean lines
+        # ----------------------------------------------------
 
-            if len(sentence) < 15:
+        cleaned_lines = []
+
+        for line in lines:
+
+            line = self.clean_line(
+                line
+            )
+
+            if not line:
 
                 continue
 
-            # Ignore verification-code noise
-            lower = sentence.lower()
+
+            # Ignore long verification-code lines
+            lower = line.lower()
 
             if (
                 "verification code" in lower
-                and len(sentence) > 100
+                and len(line) > 80
             ):
 
                 continue
 
-            useful.append(
-                sentence
+
+            cleaned_lines.append(
+                line
             )
 
-        return useful
+
+        # ----------------------------------------------------
+        # Remove obvious duplicate lines
+        # ----------------------------------------------------
+
+        unique_lines = []
+
+        for line in cleaned_lines:
+
+            if line not in unique_lines:
+
+                unique_lines.append(
+                    line
+                )
+
+
+        # ----------------------------------------------------
+        # Identify important content
+        # ----------------------------------------------------
+
+        important = []
+
+        keywords = [
+            "certificate",
+            "completion",
+            "simulation",
+            "data",
+            "analysis",
+            "technology",
+            "completed",
+            "practical",
+            "deloitte",
+            "forage",
+            "issued"
+        ]
+
+
+        for line in unique_lines:
+
+            lower = line.lower()
+
+            if any(
+                keyword in lower
+                for keyword in keywords
+            ):
+
+                if line not in important:
+
+                    important.append(
+                        line
+                    )
+
+
+        # ----------------------------------------------------
+        # If important lines are available
+        # ----------------------------------------------------
+
+        selected = []
+
+
+        for line in important:
+
+            if line not in selected:
+
+                selected.append(
+                    line
+                )
+
+            if len(selected) >= 6:
+
+                break
+
+
+        # ----------------------------------------------------
+        # Otherwise use first meaningful lines
+        # ----------------------------------------------------
+
+        if not selected:
+
+            for line in unique_lines:
+
+                if len(line) >= 5:
+
+                    selected.append(
+                        line
+                    )
+
+                if len(selected) >= 6:
+
+                    break
+
+
+        # ----------------------------------------------------
+        # Build natural summary
+        # ----------------------------------------------------
+
+        if selected:
+
+            joined = " | ".join(
+                selected
+            )
+
+
+            return (
+                f"Briefly, this document "
+                f"({filename}) contains: "
+                f"{joined}."
+            )
+
+
+        return (
+            f"This document is titled "
+            f"{filename}, but its readable "
+            f"content could not be summarized."
+        )
 
 
     # ========================================================
-    # GENERATE DOCUMENT SUMMARY
+    # QUESTION ANSWERING
+    # ========================================================
+
+    def answer_question(
+        self,
+        question,
+        document
+    ):
+
+        lines = document["lines"]
+
+        question_lower = question.lower()
+
+
+        # ----------------------------------------------------
+        # Summary request detection
+        # ----------------------------------------------------
+
+        summary_patterns = [
+            "brief",
+            "briefly",
+            "summary",
+            "summarize",
+            "summarise",
+            "about this document",
+            "about the document",
+            "describe this document",
+            "describe the document",
+            "tell me about this document",
+            "tell me about the document",
+            "what is this document"
+        ]
+
+
+        is_summary = any(
+            pattern in question_lower
+            for pattern in summary_patterns
+        )
+
+
+        if is_summary:
+
+            return self.create_summary(
+                document
+            )
+
+
+        # ----------------------------------------------------
+        # Keyword search
+        # ----------------------------------------------------
+
+        stop_words = {
+            "what",
+            "is",
+            "are",
+            "the",
+            "a",
+            "an",
+            "this",
+            "that",
+            "document",
+            "tell",
+            "me",
+            "about",
+            "please",
+            "can",
+            "you",
+            "explain",
+            "give",
+            "brief",
+            "briefly",
+            "how",
+            "why",
+            "when",
+            "where",
+            "who"
+        }
+
+
+        words = re.findall(
+            r"[a-zA-Z]{3,}",
+            question_lower
+        )
+
+
+        keywords = [
+            word
+            for word in words
+            if word not in stop_words
+        ]
+
+
+        # ----------------------------------------------------
+        # Find matching lines
+        # ----------------------------------------------------
+
+        matches = []
+
+
+        for line in lines:
+
+            lower = line.lower()
+
+            score = 0
+
+
+            for keyword in keywords:
+
+                if keyword in lower:
+
+                    score += 1
+
+
+            if score > 0:
+
+                matches.append(
+                    (
+                        score,
+                        line
+                    )
+                )
+
+
+        matches.sort(
+            key=lambda x: x[0],
+            reverse=True
+        )
+
+
+        # ----------------------------------------------------
+        # Return matching content
+        # ----------------------------------------------------
+
+        if matches:
+
+            answer_lines = []
+
+            for score, line in matches[:5]:
+
+                if line not in answer_lines:
+
+                    answer_lines.append(
+                        line
+                    )
+
+
+            return (
+                "Based on the document: "
+                + " ".join(answer_lines)
+            )
+
+
+        return (
+            "I could not find a specific answer "
+            "to that question in the document."
+        )
+
+
+    # ========================================================
+    # MAIN GENERATE FUNCTION
     # ========================================================
 
     def generate(
@@ -213,207 +541,20 @@ class VLMGenerator:
         retrieved_pages
     ):
 
-        document_text, pages = (
-            self.extract_document_text()
-        )
+        document = self.extract_document()
 
-        # ----------------------------------------------------
-        # No PDF text
-        # ----------------------------------------------------
 
-        if not document_text:
-
-            if retrieved_pages:
-
-                page_numbers = []
-
-                for page in retrieved_pages:
-
-                    number = page[
-                        "page_number"
-                    ]
-
-                    if number not in page_numbers:
-
-                        page_numbers.append(
-                            number
-                        )
-
-                return (
-                    "I found relevant page(s) "
-                    + ", ".join(
-                        str(x)
-                        for x in page_numbers
-                    )
-                    + ", but I could not extract "
-                      "text from the PDF to generate "
-                      "a detailed answer."
-                )
+        if not document["text"].strip():
 
             return (
-                "I could not find enough information "
-                "in the document to answer the question."
+                "I could not extract readable text "
+                "from the uploaded PDF."
             )
 
 
-        # ----------------------------------------------------
-        # DOCUMENT SUMMARY REQUEST
-        # ----------------------------------------------------
-
-        question_lower = question.lower()
-
-        summary_words = [
-            "briefly",
-            "brief",
-            "summarize",
-            "summary",
-            "about the document",
-            "describe the document",
-            "what is this document",
-            "tell me about the document"
-        ]
-
-        is_summary_request = any(
-            word in question_lower
-            for word in summary_words
-        )
-
-
-        sentences = self.important_sentences(
-            document_text
-        )
-
-
-        # ----------------------------------------------------
-        # SUMMARY
-        # ----------------------------------------------------
-
-        if is_summary_request:
-
-            selected = []
-
-            # Take the first useful sentences
-            for sentence in sentences:
-
-                if sentence not in selected:
-
-                    selected.append(
-                        sentence
-                    )
-
-                if len(selected) >= 4:
-
-                    break
-
-
-            if selected:
-
-                summary = " ".join(
-                    selected
-                )
-
-                return (
-                    "Briefly: "
-                    + summary
-                )
-
-
-        # ----------------------------------------------------
-        # QUESTION-BASED SEARCH
-        # ----------------------------------------------------
-
-        keywords = re.findall(
-            r"[a-zA-Z]{3,}",
-            question_lower
-        )
-
-
-        stop_words = {
-            "what",
-            "when",
-            "where",
-            "which",
-            "who",
-            "whom",
-            "why",
-            "how",
-            "does",
-            "this",
-            "that",
-            "about",
-            "document",
-            "tell",
-            "briefly",
-            "please",
-            "give"
-        }
-
-
-        keywords = [
-            word
-            for word in keywords
-            if word not in stop_words
-        ]
-
-
-        matching_sentences = []
-
-
-        for sentence in sentences:
-
-            sentence_lower = (
-                sentence.lower()
-            )
-
-            score = sum(
-                1
-                for keyword in keywords
-                if keyword in sentence_lower
-            )
-
-            if score > 0:
-
-                matching_sentences.append(
-                    (
-                        score,
-                        sentence
-                    )
-                )
-
-
-        matching_sentences.sort(
-            key=lambda x: x[0],
-            reverse=True
-        )
-
-
-        # ----------------------------------------------------
-        # RETURN MATCHING ANSWER
-        # ----------------------------------------------------
-
-        if matching_sentences:
-
-            best_sentences = [
-                item[1]
-                for item in matching_sentences[:3]
-            ]
-
-            return (
-                "Based on the document: "
-                + " ".join(
-                    best_sentences
-                )
-            )
-
-
-        # ----------------------------------------------------
-        # FALLBACK
-        # ----------------------------------------------------
-
-        return (
-            "I could not find a specific answer "
-            "to that question in the extracted "
-            "document content."
+        return self.answer_question(
+            question,
+            document
         )
 
 
@@ -455,6 +596,7 @@ if __name__ == "__main__":
 
         print("\nAnswer:")
         print("-" * 60)
+
         print(answer)
 
 
